@@ -1,0 +1,268 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "id": "likely-tucson",
+   "metadata": {},
+   "source": [
+    "# Prerequisite\n",
+    "attention mechanism \\\n",
+    "seq2seq"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "ideal-panic",
+   "metadata": {},
+   "source": [
+    "# 트랜스포머의 하이퍼 파라미터\n",
+    "\n",
+    "\n",
+    "dimension of embedding = 512    :     512차원을 갖는다 \\\n",
+    "num_layers = 6 : 인코더 디코더를 얼마나 많이 쌓을 것인가 \\\n",
+    "num_heads = 8 : 인코딩때 몇가징 시각으로 문제를 볼것인가\n",
+    "\n",
+    "\n",
+    "\n",
+    "**트랜스포머가 등장한 이유** : seq2seq의 문제는 seq 길이가 길어지면 정보 손실이 일어나는 문제가 있다. 그렇다면 seq을 사용하지 않는 방법론을 생각하다가 enc-dec으로만 기존의 문제를 해결할 수 없을까라는 생각을 하였다. <br>\n",
+    "**seq2seq과 차이점** : seq은 t의 시간성을 가지는 구조였다면, transformer는 enc-dec구조가 n개 있다는 점이 차별점이다. 논문에서는 6개의 enc-dec를 사용하였다.\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "genuine-limitation",
+   "metadata": {},
+   "source": [
+    "## 1. 포지셔날 인코딩\n",
+    "seq모델과는 다르게 시간성이 없어진 모델이다. 그렇다면 단어들간의 시간성, 순서성을 어떻게 넣어줄까? <br>\n",
+    "=> 포지셔날 인코딩이라는 개념을 사용하였다. <br>\n",
+    "\n",
+    "구체적으로 방법론을 이야기 하자면, word embedding후 positional encoding을 하였다. <br>\n",
+    "<br>\n",
+    "$PE_{(pos,2i)} =\\sin(pos/10000^{2i/dmodel})$\n",
+    "\n",
+    "$PE_{(pos,2i+1)} =\\cos(pos/10000^{2i/dmodel})$\n",
+    "\n",
+    "여기서 pos는 몇번째 단어인지, i는 몇번째 embedding인지, dmodel은 embedding의 차원수 이다. <br>\n",
+    "이렇게 포지셔널 인코딩 값을 더하면 같은 단어라도 문장내의 위치에 따라 벡터 값이 달라진다."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 4,
+   "id": "working-blame",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import numpy as np\n",
+    "import matplotlib.pyplot as plt\n",
+    "import tensorflow as tf\n",
+    "\n",
+    "class PositionalEncoding(tf.keras.layers.Layer):\n",
+    "    def __init__(self, position, d_model):\n",
+    "        '''\n",
+    "        클래스의 인자로 포지션과, 임베딩 차원의 크기를 받는다.\n",
+    "        '''\n",
+    "        super(PositionalEncoding, self).__init__()\n",
+    "        self.pos_encoding = self.positional_encoding(position, d_model)\n",
+    "\n",
+    "    def get_angles(self, position, i, d_model):\n",
+    "        '''sin,cos을 하기전 computations'''\n",
+    "        angles = 1 / tf.pow(10000, (2 * (i // 2)) / tf.cast(d_model, tf.float32))\n",
+    "        return position * angles\n",
+    "\n",
+    "    def positional_encoding(self, position, d_model):\n",
+    "        angle_rads = self.get_angles(\n",
+    "                position = tf.range(position, dtype=tf.float32)[:, tf.newaxis], # 0,1,...,position with shape [position,1]\n",
+    "                i = tf.range(d_model, dtype=tf.float32)[tf.newaxis, :],         # 0,1,...,dim with shape [1, dim]\n",
+    "                d_model = d_model)\n",
+    "                # returning [position, dim] metrix b/c broadcasting\n",
+    "        \n",
+    "        \n",
+    "        # emb-dim배열의 짝수 인덱스(2i)에는 사인 함수 적용\n",
+    "        sines = tf.math.sin(angle_rads[:, 0::2])\n",
+    "\n",
+    "        # emb-dim배열의 홀수 인덱스(2i+1)에는 코사인 함수 적용\n",
+    "        cosines = tf.math.cos(angle_rads[:, 1::2])\n",
+    "\n",
+    "\n",
+    "        angle_rads = np.zeros(angle_rads.shape)\n",
+    "        angle_rads[:, 0::2] = sines\n",
+    "        angle_rads[:, 1::2] = cosines\n",
+    "        pos_encoding = tf.constant(angle_rads)       # numpy array -> tensorflow tensor\n",
+    "        pos_encoding = pos_encoding[tf.newaxis, ...] # [position, dim] => [1, position, dim]  // b/c input shape is 3d tensor\n",
+    "\n",
+    "        print(pos_encoding.shape)\n",
+    "        return tf.cast(pos_encoding, tf.float32)\n",
+    "\n",
+    "    def call(self, inputs):\n",
+    "        return inputs + self.pos_encoding[:, :tf.shape(inputs)[1], :]"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 13,
+   "id": "headed-electric",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "pos = tf.range(10, dtype = tf.float32)[:, tf.newaxis]\n",
+    "i = tf.range(3, dtype = tf.float32)[tf.newaxis, :]"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 21,
+   "id": "efficient-cleanup",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "pre = 1/tf.pow(10000, (2*(i//2))/tf.cast(3, dtype=tf.float32))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 22,
+   "id": "removed-revolution",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "<tf.Tensor: shape=(1, 3), dtype=float32, numpy=array([[1.        , 1.        , 0.00215443]], dtype=float32)>"
+      ]
+     },
+     "execution_count": 22,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "pre"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 23,
+   "id": "viral-gravity",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "<tf.Tensor: shape=(10, 1), dtype=float32, numpy=\n",
+       "array([[0.],\n",
+       "       [1.],\n",
+       "       [2.],\n",
+       "       [3.],\n",
+       "       [4.],\n",
+       "       [5.],\n",
+       "       [6.],\n",
+       "       [7.],\n",
+       "       [8.],\n",
+       "       [9.]], dtype=float32)>"
+      ]
+     },
+     "execution_count": 23,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "pos"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 25,
+   "id": "missing-mediterranean",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "<tf.Tensor: shape=(1, 10, 3), dtype=float32, numpy=\n",
+       "array([[[0.0000000e+00, 0.0000000e+00, 0.0000000e+00],\n",
+       "        [1.0000000e+00, 1.0000000e+00, 2.1544343e-03],\n",
+       "        [2.0000000e+00, 2.0000000e+00, 4.3088687e-03],\n",
+       "        [3.0000000e+00, 3.0000000e+00, 6.4633032e-03],\n",
+       "        [4.0000000e+00, 4.0000000e+00, 8.6177373e-03],\n",
+       "        [5.0000000e+00, 5.0000000e+00, 1.0772171e-02],\n",
+       "        [6.0000000e+00, 6.0000000e+00, 1.2926606e-02],\n",
+       "        [7.0000000e+00, 7.0000000e+00, 1.5081041e-02],\n",
+       "        [8.0000000e+00, 8.0000000e+00, 1.7235475e-02],\n",
+       "        [9.0000000e+00, 9.0000000e+00, 1.9389909e-02]]], dtype=float32)>"
+      ]
+     },
+     "execution_count": 25,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "new = pre*pos\n",
+    "new[tf.newaxis, ...].shape"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 26,
+   "id": "accredited-validity",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "<tf.Tensor: shape=(10, 3), dtype=float32, numpy=\n",
+       "array([[0.0000000e+00, 0.0000000e+00, 0.0000000e+00],\n",
+       "       [1.0000000e+00, 1.0000000e+00, 2.1544343e-03],\n",
+       "       [2.0000000e+00, 2.0000000e+00, 4.3088687e-03],\n",
+       "       [3.0000000e+00, 3.0000000e+00, 6.4633032e-03],\n",
+       "       [4.0000000e+00, 4.0000000e+00, 8.6177373e-03],\n",
+       "       [5.0000000e+00, 5.0000000e+00, 1.0772171e-02],\n",
+       "       [6.0000000e+00, 6.0000000e+00, 1.2926606e-02],\n",
+       "       [7.0000000e+00, 7.0000000e+00, 1.5081041e-02],\n",
+       "       [8.0000000e+00, 8.0000000e+00, 1.7235475e-02],\n",
+       "       [9.0000000e+00, 9.0000000e+00, 1.9389909e-02]], dtype=float32)>"
+      ]
+     },
+     "execution_count": 26,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "new"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "broke-briefing",
+   "metadata": {},
+   "outputs": [],
+   "source": []
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.8.6"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
